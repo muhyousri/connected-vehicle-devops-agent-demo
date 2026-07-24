@@ -552,7 +552,7 @@ def page_trips():
         dist = round(random.uniform(5, 145), 1)
         dur = random.randint(10, 175)
         avg_speed = round(dist / (dur / 60), 1)
-        max_speed = random.randint(int(avg_speed), min(int(avg_speed * 1.8), 180))
+        max_speed = random.randint(int(avg_speed) + 10, max(int(avg_speed * 1.8), int(avg_speed) + 20))
         harsh_b = random.randint(0, 3)
         harsh_a = random.randint(0, 2)
         idle = random.randint(0, 20)

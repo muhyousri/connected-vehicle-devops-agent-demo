@@ -88,8 +88,8 @@ discover_resources() {
         --query "Stacks[0].Outputs" \
         --output json 2>/dev/null); then
 
-        CLUSTER_ARN=$(echo "$stack_outputs" | \
-            python3 -c "import sys,json; outputs=json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey']=='AuroraEndpoint'),''))" 2>/dev/null || true)
+        CLUSTER_ARN=$(aws rds describe-db-clusters --db-cluster-identifier "$DB_CLUSTER_ID" \
+            --region "$AWS_REGION" --query 'DBClusters[0].DBClusterArn' --output text 2>/dev/null || true)
         SECRET_ARN=$(echo "$stack_outputs" | \
             python3 -c "import sys,json; outputs=json.load(sys.stdin); print(next((o['OutputValue'] for o in outputs if o['OutputKey']=='AuroraSecretArn'),''))" 2>/dev/null || true)
 
