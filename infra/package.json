@@ -1,0 +1,27 @@
+{
+  "name": "motoros-demo-infra",
+  "version": "1.0.0",
+  "description": "MotorOS Connected Vehicle Platform - CDK Infrastructure",
+  "bin": {
+    "motoros-demo": "bin/motoros-demo.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all",
+    "diff": "cdk diff"
+  },
+  "devDependencies": {
+    "aws-cdk": "2.150.0",
+    "typescript": "5.5.3",
+    "ts-node": "10.9.2",
+    "@types/node": "20.14.10"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.150.0",
+    "constructs": "10.3.0",
+    "source-map-support": "0.5.21"
+  }
+}

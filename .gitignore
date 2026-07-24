@@ -1,0 +1,15 @@
+node_modules/
+cdk.out/
+cdk.context.json
+__pycache__/
+*.pyc
+*.js
+*.d.ts
+!jest.config.js
+dist/
+build/
+.DS_Store
+.env
+.env.*
+*.pem
+*.key
