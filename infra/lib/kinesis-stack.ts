@@ -16,17 +16,6 @@ export class KinesisStack extends cdk.Stack {
       retentionPeriod: cdk.Duration.hours(24),
     });
 
-    // Enable enhanced shard-level metrics so the agent can see per-shard throughput
-    const cfnStream = this.stream.node.defaultChild as kinesis.CfnStream;
-    cfnStream.addPropertyOverride('StreamModeDetails', { StreamMode: 'PROVISIONED' });
-    cfnStream.addPropertyOverride('EnhancedMetrics', [{
-      ShardLevelMetrics: [
-        'IncomingBytes', 'IncomingRecords', 'OutgoingBytes', 'OutgoingRecords',
-        'WriteProvisionedThroughputExceeded', 'ReadProvisionedThroughputExceeded',
-        'IteratorAgeMilliseconds',
-      ],
-    }]);
-
     new cdk.CfnOutput(this, 'StreamArn', { value: this.stream.streamArn });
     new cdk.CfnOutput(this, 'StreamName', { value: this.stream.streamName });
   }
