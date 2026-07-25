@@ -103,6 +103,11 @@ export class DashboardStack extends cdk.Stack {
       principal: new iam.ServicePrincipal('lambda.alarms.cloudwatch.amazonaws.com'),
     });
 
+    // Subscribe alarm-bridge to SNS so alarms trigger DevOps Agent investigation
+    const alertTopic = sns.Topic.fromTopicArn(this, 'AlertTopic', props.alertTopicArn);
+    alertTopic.addSubscription(new subscriptions.LambdaSubscription(webhookFn));
+    alertTopic.addSubscription(new subscriptions.LambdaSubscription(this.alarmBridgeFn));
+
     // API Gateway
     const api = new apigateway.RestApi(this, 'DemoApi', {
       restApiName: `${prefix}-demo-dashboard`,
@@ -121,10 +126,6 @@ export class DashboardStack extends cdk.Stack {
     // /alert/clear → Clear alarms
     const clearResource = alertResource.addResource('clear');
     clearResource.addMethod('POST', new apigateway.LambdaIntegration(webhookFn));
-
-    // Subscribe webhook to SNS topic
-    const alertTopic = sns.Topic.fromTopicArn(this, 'AlertTopic', props.alertTopicArn);
-    alertTopic.addSubscription(new subscriptions.LambdaSubscription(webhookFn));
 
     // Wire alarm-bridge to the pod restart alarm
     // The Dashboard stack outputs the Lambda ARN — on second deploy or manual wiring,
