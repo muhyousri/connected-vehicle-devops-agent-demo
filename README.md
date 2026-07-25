@@ -27,7 +27,10 @@ Complete this before deploying infrastructure.
 1. Open the [DevOps Agent console](https://console.aws.amazon.com/devops-agent/) in your target region.
 2. [Create an Agent Space](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-creating-an-agent-space.html). Select "Auto-create a new AWS DevOps Agent role" for both the monitor role and operator app role.
 3. [Configure a DevOps Agent Actions Role](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-creating-an-agent-space.html) with write permissions (SNS, CloudWatch, EKS).
-4. Note the Agent Space IAM role ARNs. Find them in IAM console under roles containing `DevOpsAgentRole-AgentSpace`. These are passed to the CDK deploy command.
+4. Note the Agent Space IAM role ARNs. Find them in IAM console under roles containing `DevOpsAgentRole-AgentSpace` and `DevOpsAgentRole-WebappAdmin`. Pass **all** of them comma-separated to the CDK deploy command. You can list them with:
+   ```bash
+   aws iam list-roles --query 'Roles[?contains(RoleName,`DevOpsAgentRole`)].Arn' --output text | tr '\t' ','
+   ```
 5. **(Optional: automated alarm-to-agent trigger)** Under Capabilities > Webhooks, [create a webhook](https://docs.aws.amazon.com/devopsagent/latest/userguide/configuring-capabilities-for-aws-devops-agent-invoking-devops-agent-through-webhook.html). Save the endpoint URL and secret. These values are passed to the CDK deploy command to enable the DevOps Agent to start investigations automatically when alarms fire.
 
 ## Step 2: Deploy
