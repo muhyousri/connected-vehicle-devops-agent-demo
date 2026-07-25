@@ -78,7 +78,7 @@ async def audit_writer_task():
                 conn.close()
             except Exception as e:
                 logger.error("audit_write_failed", correlation_id=correlation_id, error=str(e))
-                conn.close()
+                # BUG: conn.close() missing in error path — connection leaks on failure
 
         await asyncio.sleep(random.uniform(3, 8))
 
@@ -113,10 +113,30 @@ async def db_keepalive_task():
         await asyncio.sleep(30)
 
 
+async def audit_compaction_task():
+    """Background: periodically reads old audit entries for compaction analysis.
+    BUG: ~20% of iterations don't close the connection (leak)."""
+    await asyncio.sleep(15)
+    while True:
+        conn = get_db_connection()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM audit_log WHERE created_at > NOW() - interval '1 hour'")
+                count = cur.fetchone()[0]
+                if random.random() > 0.2:
+                    conn.close()
+                # else: connection leaked — not closed
+            except Exception as e:
+                logger.debug("compaction_check_failed", error=str(e))
+        await asyncio.sleep(45)
+
+
 @app.on_event("startup")
 async def startup():
     logger.info("service_starting", service=SERVICE_NAME)
     asyncio.create_task(audit_writer_task())
+    asyncio.create_task(audit_compaction_task())
     asyncio.create_task(metrics_emitter_task())
     asyncio.create_task(db_keepalive_task())
 
