@@ -235,20 +235,10 @@ except Exception as e:
       const codePath = path.join(servicesDir, svc.name, 'main.py');
       const code = fs.existsSync(codePath) ? fs.readFileSync(codePath, 'utf-8') : '# placeholder';
 
-      // Read per-service requirements (allows different dependency versions per team)
-      const reqPath = path.join(servicesDir, svc.name, 'requirements.txt');
-      const svcRequirements = fs.existsSync(reqPath) ? fs.readFileSync(reqPath, 'utf-8') : defaultRequirements;
-
       const codeMap = this.cluster.addManifest(`Code-${svc.name}`, {
         apiVersion: 'v1', kind: 'ConfigMap',
         metadata: { name: `${svc.name}-code`, namespace },
         data: { 'main.py': code },
-      });
-
-      const reqMap = this.cluster.addManifest(`Req-${svc.name}`, {
-        apiVersion: 'v1', kind: 'ConfigMap',
-        metadata: { name: `${svc.name}-requirements`, namespace },
-        data: { 'requirements.txt': svcRequirements },
       });
 
       const deploy = this.cluster.addManifest(`Deploy-${svc.name}`,
