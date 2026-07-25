@@ -201,6 +201,25 @@ export class AlertingStack extends cdk.Stack {
     notificationRateAlarm.addAlarmAction(snsAction);
     notificationRateAlarm.addOkAction(snsAction);
 
+    // 7. Telemetry Ingestor Lag — fires when Kinesis consumer falls behind
+    const telemetryLagAlarm = new cloudwatch.Alarm(this, 'TelemetryIngestorLagAlarm', {
+      alarmName: `${prefix}-telemetry-ingestor-lag`,
+      alarmDescription: 'Telemetry ingestor falling behind — iterator age exceeds 60 seconds',
+      metric: new cloudwatch.Metric({
+        namespace: 'AWS/Kinesis',
+        metricName: 'GetRecords.IteratorAgeMilliseconds',
+        dimensionsMap: { StreamName: `${prefix}-vehicle-telemetry` },
+        statistic: 'Maximum',
+        period: cdk.Duration.minutes(1),
+      }),
+      threshold: 60000,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    telemetryLagAlarm.addAlarmAction(snsAction);
+    telemetryLagAlarm.addOkAction(snsAction);
+
     // =========================================================================
     // CloudWatch Dashboards
     // =========================================================================

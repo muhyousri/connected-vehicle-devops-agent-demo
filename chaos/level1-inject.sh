@@ -3,10 +3,10 @@
 # level1-inject.sh — Kinesis Telemetry Flood
 # =============================================================================
 # Scenario: Telemetry producer rate spikes (simulating a fleet waking up after
-# scheduled maintenance), overwhelming the Kinesis stream. The ingestor falls
-# behind, iterator age grows, and the telemetry pipeline alarm fires.
+# scheduled maintenance window). The sustained burst overwhelms the stream
+# causing write throttling and consumer lag (iterator age).
 #
-# RCA path: alarm → Kinesis throttling metrics → producer rate spike
+# RCA path: alarm → Kinesis throttling/iterator age → producer pod rate spike
 # Difficulty: Easy (single service, clear metrics)
 # =============================================================================
 set -euo pipefail
@@ -23,15 +23,15 @@ echo -e "${RED}║  Scenario: Fleet wake-up burst overwhelms telemetry stream  �
 echo -e "${RED}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-# Check prerequisites
 command -v kubectl >/dev/null 2>&1 || { echo "kubectl required"; exit 1; }
 
-echo -e "${BLUE}[INFO]${NC}  Flooding Kinesis stream with 5000 records (10 batches of 500)..."
-echo -e "${BLUE}[INFO]${NC}  This simulates a fleet of 500 vehicles simultaneously reporting telemetry."
+echo -e "${BLUE}[INFO]${NC}  Sustained flood: 500 records/sec for 60 seconds (~30,000 records)"
+echo -e "${BLUE}[INFO]${NC}  Each record ~5KB payload to saturate 1MB/s per-shard write limit"
+echo -e "${BLUE}[INFO]${NC}  2 shards × 1MB/s = 2MB/s max. We'll push ~2.5MB/s to cause throttling"
 echo ""
 
 kubectl exec deploy/telemetry-producer -n "$NAMESPACE" -- python3 -c "
-import boto3, json, random, time
+import boto3, json, random, time, sys
 from datetime import datetime, timezone
 
 kinesis = boto3.client('kinesis', region_name='${REGION}')
@@ -44,10 +44,14 @@ vins = [
 ]
 events = ['HEARTBEAT','SPEED_EVENT','HARD_BRAKE','IGNITION_ON','CHARGING_START','DOOR_OPEN']
 
-print('Starting flood...')
+print('Starting sustained flood (60 seconds)...')
 total_sent = 0
 total_failed = 0
-for batch in range(10):
+start = time.time()
+batch_num = 0
+
+while time.time() - start < 60:
+    batch_num += 1
     records = []
     for i in range(500):
         vin = random.choice(vins)
@@ -63,25 +67,38 @@ for batch in range(10):
             'cell_voltage_max': round(random.uniform(3.9, 4.2), 2),
             'ambient_temp_c': round(random.uniform(-5, 35), 1),
             'odometer_km': random.randint(1000, 120000),
-            'payload_padding': 'X' * 1500,
+            'tire_pressure_fl': round(random.uniform(225, 255), 1),
+            'tire_pressure_fr': round(random.uniform(225, 255), 1),
+            'tire_pressure_rl': round(random.uniform(220, 250), 1),
+            'tire_pressure_rr': round(random.uniform(220, 250), 1),
+            'engine_temp_c': round(random.uniform(30, 105), 1),
+            'payload': 'X' * 3500,
         }
         records.append({'Data': json.dumps(r).encode(), 'PartitionKey': vin})
-    # PutRecords max is 500
-    resp = kinesis.put_records(StreamName=stream, Records=records)
-    failed = resp.get('FailedRecordCount', 0)
-    total_sent += len(records)
-    total_failed += failed
-    print(f'  Batch {batch+1}/10: sent {len(records)}, failed {failed}')
-    time.sleep(0.5)
+    try:
+        resp = kinesis.put_records(StreamName=stream, Records=records)
+        failed = resp.get('FailedRecordCount', 0)
+        total_sent += len(records)
+        total_failed += failed
+        if batch_num % 5 == 0:
+            elapsed = int(time.time() - start)
+            rate = total_sent / max(elapsed, 1)
+            print(f'  [{elapsed}s] batch {batch_num}: sent {total_sent}, failed {total_failed}, rate ~{rate:.0f} rec/s')
+            sys.stdout.flush()
+    except Exception as e:
+        print(f'  Error: {e}')
+    time.sleep(0.1)
 
-print(f'Done: {total_sent} records sent, {total_failed} failed (throttled)')
+elapsed = int(time.time() - start)
+print(f'Done: {total_sent} records in {elapsed}s, {total_failed} throttled')
 " 2>&1
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║  ✅ LEVEL 1 INJECTION COMPLETE                              ║${NC}"
-echo -e "${GREEN}║  • 5000 records flooded to Kinesis                          ║${NC}"
-echo -e "${GREEN}║  • Ingestor will fall behind (iterator age grows)           ║${NC}"
-echo -e "${GREEN}║  • Alarm should fire within ~2 minutes                      ║${NC}"
-echo -e "${GREEN}║  To reset: ./level1-reset.sh                                ║${NC}"
+echo -e "${GREEN}║  • Sustained flood sent for 60 seconds                      ║${NC}"
+echo -e "${GREEN}║  • Kinesis WriteProvisionedThroughputExceeded expected       ║${NC}"
+echo -e "${GREEN}║  • Ingestor iterator age will spike                         ║${NC}"
+echo -e "${GREEN}║  • Check: GetRecords.IteratorAgeMilliseconds in CloudWatch  ║${NC}"
+echo -e "${GREEN}║  To reset: ./level1-reset.sh (self-resolving)               ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════╝${NC}"
