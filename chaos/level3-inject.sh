@@ -2,17 +2,19 @@
 # =============================================================================
 # level3-inject.sh — ElastiCache Eviction Cascade
 # =============================================================================
-# Scenario: A parameter group change on Redis enables aggressive eviction.
-# Vehicle position cache is evicted. vehicle-state-svc returns stale data.
-# Geofence monitor sees vehicles "outside" zones → false notifications spike.
+# Scenario: A K8s maintenance job changes the Redis parameter group to enable
+# aggressive evictions. Vehicle position cache gets evicted. vehicle-state-svc
+# returns stale data. Geofence monitor sees false "outside zone" → notification
+# rate spikes.
 #
-# RCA path (4 hops):
+# RCA path (4+ hops):
 #   notification alarm → why so many? → geofence violations in audit_log
-#   → why false? → positions are stale (check vehicle-state-svc logs)
-#   → why stale? → Redis evictions (check ElastiCache metrics)
-#   → why evictions? → parameter group changed (check CloudTrail)
+#   → why false violations? → positions are stale (vehicle-state-svc)
+#   → why stale? → Redis evictions (ElastiCache metrics: Evictions spike)
+#   → why evictions? → parameter group changed to allkeys-lru
+#   → who changed it? → CloudTrail shows EKS node role → K8s job
 #
-# Difficulty: Hard (4-hop causality, no skill guidance)
+# Difficulty: Hard (no skill, multi-hop, no direct human CloudTrail entry)
 # =============================================================================
 set -euo pipefail
 
@@ -30,57 +32,86 @@ echo ""
 
 command -v kubectl >/dev/null 2>&1 || { echo "kubectl required"; exit 1; }
 
-# Step 1: Change ElastiCache parameter group (creates CloudTrail evidence)
-echo -e "${BLUE}[INFO]${NC}  ━━━ Step 1/3: Applying aggressive eviction parameter group ━━━"
-aws elasticache create-cache-parameter-group \
-  --cache-parameter-group-name motoros3-cache-eviction-test \
-  --cache-parameter-group-family redis7 \
-  --description "Low maxmemory for eviction testing" \
-  --region "$REGION" 2>/dev/null || true
+# Step 1: Launch a K8s Job that modifies the ElastiCache parameter group
+# This makes the CloudTrail entry come from the EKS node role, not human admin
+echo -e "${BLUE}[INFO]${NC}  ━━━ Step 1/3: Launching cache-maintenance job (modifies Redis config) ━━━"
 
-aws elasticache modify-cache-parameter-group \
-  --cache-parameter-group-name motoros3-cache-eviction-test \
-  --parameter-name-values "ParameterName=maxmemory-policy,ParameterValue=allkeys-lru" \
-  --region "$REGION" >/dev/null 2>&1 || true
+kubectl delete job cache-maintenance -n "$NAMESPACE" 2>/dev/null || true
 
-aws elasticache modify-cache-cluster \
-  --cache-cluster-id motoros3-cache \
-  --cache-parameter-group-name motoros3-cache-eviction-test \
-  --apply-immediately \
-  --region "$REGION" >/dev/null 2>&1 || true
-echo -e "${GREEN}[OK]${NC}    Parameter group 'motoros3-cache-eviction-test' applied (allkeys-lru)"
+cat <<'JOBEOF' | kubectl apply -f - 2>&1
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cache-maintenance
+  namespace: motoros-prod
+  labels:
+    app: cache-maintenance
+    team: platform-ops
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: cache-maintenance
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: cache-tuner
+        image: amazon/aws-cli:2.15.0
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "cache-maintenance: adjusting eviction policy for memory optimization"
+          aws elasticache create-cache-parameter-group \
+            --cache-parameter-group-name motoros3-cache-eviction-test \
+            --cache-parameter-group-family redis7 \
+            --description "Adjusted eviction for memory optimization" \
+            --region eu-central-1 2>/dev/null || true
+          aws elasticache modify-cache-parameter-group \
+            --cache-parameter-group-name motoros3-cache-eviction-test \
+            --parameter-name-values "ParameterName=maxmemory-policy,ParameterValue=allkeys-lru" \
+            --region eu-central-1
+          aws elasticache modify-cache-cluster \
+            --cache-cluster-id motoros3-cache \
+            --cache-parameter-group-name motoros3-cache-eviction-test \
+            --apply-immediately \
+            --region eu-central-1
+          echo "cache-maintenance: done"
+JOBEOF
 
-# Step 2: Fill Redis to trigger evictions
+echo -e "${BLUE}[INFO]${NC}  Waiting for job to complete..."
+kubectl wait --for=condition=complete job/cache-maintenance -n "$NAMESPACE" --timeout=60s 2>&1 || true
+echo -e "${GREEN}[OK]${NC}    cache-maintenance job completed (parameter group changed via EKS node role)"
+
+# Step 2: Flood Redis with large keys to stress memory
 echo ""
-echo -e "${BLUE}[INFO]${NC}  ━━━ Step 2/3: Flooding Redis to trigger evictions ━━━"
+echo -e "${BLUE}[INFO]${NC}  ━━━ Step 2/3: Writing large keys to Redis (stress memory) ━━━"
 REDIS_HOST=$(aws elasticache describe-cache-clusters \
   --cache-cluster-id motoros3-cache --show-cache-node-info \
   --region "$REGION" \
   --query 'CacheClusters[0].CacheNodes[0].Endpoint.Address' --output text 2>/dev/null)
 
 kubectl exec deploy/vehicle-state-svc -n "$NAMESPACE" -- python3 -c "
-import socket, json, random
+import socket, random
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.connect(('${REDIS_HOST}', 6379))
 
-# Write large keys to stress memory
 for i in range(500):
-    vin = f'vehicle:position:FLOOD-{i:04d}'
-    data = 'X' * 8000  # 8KB per key = 4MB total, stresses t3.micro
-    cmd = f'SET {vin} {data}\r\n'
+    key = f'vehicle:position:cache-stress-{i:04d}'
+    data = 'X' * 8000
+    cmd = f'SET {key} {data}\r\n'
     s.sendall(cmd.encode())
     s.recv(256)
 
-# Check memory stats
 s.sendall(b'INFO memory\r\n')
 info = s.recv(4096).decode()
 for line in info.split('\r\n'):
-    if 'used_memory_human' in line or 'maxmemory_human' in line or 'evicted_keys' in line:
+    if 'used_memory_human' in line:
         print(f'  {line}')
 s.close()
 " 2>&1
-echo -e "${GREEN}[OK]${NC}    Redis stressed with 500 large keys"
+echo -e "${GREEN}[OK]${NC}    500 large keys written to Redis"
 
 # Step 3: Insert false geofence notifications (the visible symptom)
 echo ""
@@ -129,8 +160,8 @@ echo -e "${GREEN}[OK]${NC}    25 false geofence notifications in audit_log"
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║  ✅ LEVEL 3 INJECTION COMPLETE                              ║${NC}"
-echo -e "${GREEN}║  • Redis parameter group changed (eviction policy)          ║${NC}"
-echo -e "${GREEN}║  • 500 large keys written to stress Redis memory            ║${NC}"
+echo -e "${GREEN}║  • K8s job modified Redis parameter group (via node role)   ║${NC}"
+echo -e "${GREEN}║  • 500 large keys stressing Redis memory                    ║${NC}"
 echo -e "${GREEN}║  • 25 false geofence notifications in audit_log             ║${NC}"
 echo -e "${GREEN}║  • Alarm fires on notification rate within ~2 min           ║${NC}"
 echo -e "${GREEN}║  To reset: ./level3-reset.sh                                ║${NC}"
