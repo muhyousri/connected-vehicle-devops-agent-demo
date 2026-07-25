@@ -155,19 +155,19 @@ export class EksStack extends cdk.Stack {
     });
     configPlatform.node.addDependency(nsPlatform);
 
-    // Requirements
-    const requirements = 'fastapi==0.109.0\nuvicorn==0.27.0\nboto3==1.34.0\npsycopg2-binary==2.9.9\nstructlog==24.1.0\n';
+    // Requirements — read per-service from services/ directory (allows different dependency versions)
+    const defaultRequirements = 'fastapi==0.109.0\nuvicorn==0.27.0\nboto3==1.34.0\npsycopg2-binary==2.9.9\nstructlog==24.1.0\ncryptography==42.0.5\n';
     const reqProd = this.cluster.addManifest('ReqProd', {
       apiVersion: 'v1', kind: 'ConfigMap',
       metadata: { name: 'motoros-requirements', namespace: 'motoros-prod' },
-      data: { 'requirements.txt': requirements },
+      data: { 'requirements.txt': defaultRequirements },
     });
     reqProd.node.addDependency(nsProd);
 
     const reqPlatform = this.cluster.addManifest('ReqPlatform', {
       apiVersion: 'v1', kind: 'ConfigMap',
       metadata: { name: 'motoros-requirements', namespace: 'motoros-platform' },
-      data: { 'requirements.txt': requirements },
+      data: { 'requirements.txt': defaultRequirements },
     });
     reqPlatform.node.addDependency(nsPlatform);
 
@@ -235,10 +235,20 @@ except Exception as e:
       const codePath = path.join(servicesDir, svc.name, 'main.py');
       const code = fs.existsSync(codePath) ? fs.readFileSync(codePath, 'utf-8') : '# placeholder';
 
+      // Read per-service requirements (allows different dependency versions per team)
+      const reqPath = path.join(servicesDir, svc.name, 'requirements.txt');
+      const svcRequirements = fs.existsSync(reqPath) ? fs.readFileSync(reqPath, 'utf-8') : defaultRequirements;
+
       const codeMap = this.cluster.addManifest(`Code-${svc.name}`, {
         apiVersion: 'v1', kind: 'ConfigMap',
         metadata: { name: `${svc.name}-code`, namespace },
         data: { 'main.py': code },
+      });
+
+      const reqMap = this.cluster.addManifest(`Req-${svc.name}`, {
+        apiVersion: 'v1', kind: 'ConfigMap',
+        metadata: { name: `${svc.name}-requirements`, namespace },
+        data: { 'requirements.txt': svcRequirements },
       });
 
       const deploy = this.cluster.addManifest(`Deploy-${svc.name}`,
