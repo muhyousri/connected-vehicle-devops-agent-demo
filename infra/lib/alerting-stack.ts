@@ -181,6 +181,26 @@ export class AlertingStack extends cdk.Stack {
     dtcRateAlarm.addAlarmAction(snsAction);
     dtcRateAlarm.addOkAction(snsAction);
 
+    // 6. Notification Rate Anomaly — fires when geofence notification rate spikes
+    // This alarm is intentionally vague: "notifications are high" but doesn't
+    // hint at the root cause (ElastiCache eviction → stale positions → false geofence alerts)
+    const notificationRateAlarm = new cloudwatch.Alarm(this, 'NotificationRateAlarm', {
+      alarmName: `${prefix}-notification-rate-anomaly`,
+      alarmDescription: 'Geofence notification dispatch rate exceeded 3x baseline',
+      metric: new cloudwatch.Metric({
+        namespace: 'MotorOS/Notifications',
+        metricName: 'GeofenceNotificationCount',
+        statistic: 'Sum',
+        period: cdk.Duration.minutes(1),
+      }),
+      threshold: 10,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    notificationRateAlarm.addAlarmAction(snsAction);
+    notificationRateAlarm.addOkAction(snsAction);
+
     // =========================================================================
     // CloudWatch Dashboards
     // =========================================================================
