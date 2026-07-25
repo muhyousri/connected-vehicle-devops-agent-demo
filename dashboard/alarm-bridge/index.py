@@ -19,32 +19,46 @@ def lambda_handler(event, context):
     
     WEBHOOK_URL, WEBHOOK_SECRET = get_webhook_config()
     
-    # Parse CloudWatch alarm event
-    alarm_name = event.get('alarmData', {}).get('alarmName', 'Unknown')
-    alarm_desc = event.get('alarmData', {}).get('configuration', {}).get('description', '')
-    new_state = event.get('alarmData', {}).get('state', {}).get('value', 'ALARM')
-    reason = event.get('alarmData', {}).get('state', {}).get('reason', '')
-    timestamp = event.get('alarmData', {}).get('state', {}).get('timestamp', datetime.utcnow().isoformat())
-    region = event.get('region', 'eu-central-1')
-    account_id = event.get('accountId', '')
-    
+    # Parse alarm data — could come via SNS or direct invocation
+    alarm_data = {}
+    if 'Records' in event:
+        # SNS notification wrapper
+        sns_message = event['Records'][0]['Sns']['Message']
+        alarm_data = json.loads(sns_message) if isinstance(sns_message, str) else sns_message
+    elif 'alarmData' in event:
+        # Direct CloudWatch alarm action
+        alarm_data = event.get('alarmData', {})
+    else:
+        alarm_data = event
+
+    # Extract alarm fields from CloudWatch alarm notification format
+    alarm_name = alarm_data.get('AlarmName', alarm_data.get('alarmName', 'Unknown'))
+    alarm_desc = alarm_data.get('AlarmDescription', alarm_data.get('description', ''))
+    new_state = alarm_data.get('NewStateValue', alarm_data.get('state', {}).get('value', 'ALARM'))
+    reason = alarm_data.get('NewStateReason', alarm_data.get('state', {}).get('reason', ''))
+    region = alarm_data.get('Region', os.environ.get('AWS_REGION', 'eu-central-1'))
+    account_id = alarm_data.get('AWSAccountId', '')
+    alarm_arn = alarm_data.get('AlarmArn', '')
+    trigger = alarm_data.get('Trigger', {})
+    timestamp = alarm_data.get('StateChangeTime', datetime.utcnow().isoformat())
+
     # Only trigger for ALARM state
     if new_state != 'ALARM':
-        return {'statusCode': 200, 'body': 'Not in ALARM state, skipping'}
+        print(f"State is {new_state}, not ALARM — skipping")
+        return {'statusCode': 200, 'body': f'State {new_state}, skipping'}
     
-    # Extract metric info
-    metrics = event.get('alarmData', {}).get('configuration', {}).get('metrics', [])
+    # Build metric info from Trigger
     metric_info = ""
-    if metrics:
-        metric = metrics[0].get('metricStat', {}).get('metric', {})
-        metric_info = f"\nMetric: {metric.get('namespace','')}/{metric.get('name','')}"
-    
+    if trigger:
+        metric_info = f"{trigger.get('Namespace','')}/{trigger.get('MetricName','')}"
+
     description = f"CloudWatch Alarm: {alarm_name}\n"
     description += f"Account: {account_id}, Region: {region}\n"
     description += f"Reason: {reason}"
     if alarm_desc:
         description += f"\nDescription: {alarm_desc}"
-    description += metric_info
+    if metric_info:
+        description += f"\nMetric: {metric_info}"
     
     # Build DevOps Agent webhook payload
     payload = {
@@ -63,8 +77,8 @@ def lambda_handler(event, context):
                 "accountId": account_id,
                 "newState": new_state,
                 "reason": reason,
-                "alarmArn": event.get('alarmArn', ''),
-                "metrics": metrics
+                "alarmArn": alarm_arn,
+                "trigger": trigger
             }
         }
     }
@@ -92,6 +106,6 @@ def lambda_handler(event, context):
     print(f"Webhook response: {response.status} {response.data.decode('utf-8')}")
     
     if response.status in [200, 202]:
-        return {'statusCode': 200, 'body': 'Investigation triggered'}
+        return {'statusCode': 200, 'body': f'Investigation triggered for {alarm_name}'}
     else:
         raise Exception(f"Webhook failed: {response.status}")
