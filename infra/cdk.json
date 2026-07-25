@@ -20,7 +20,7 @@
     "slackWebhookUrl": "",
     "devopsAgentWebhookUrl": "",
     "devopsAgentWebhookSecret": "",
-    "devopsAgentRoleArns": "",
+    "devopsAgentRoleArns": "arn:aws:iam::833617485655:role/service-role/DevOpsAgentRole-AgentSpace-k3f16ak6,arn:aws:iam::833617485655:role/service-role/DevOpsAgentRole-AgentSpace-oba3k1rs,arn:aws:iam::833617485655:role/service-role/DevOpsAgentRole-AgentSpace-x6api9no,arn:aws:iam::833617485655:role/service-role/DevOpsAgentRole-WebappAdmin-9v8a9t60,arn:aws:iam::833617485655:role/service-role/DevOpsAgentRole-WebappAdmin-ld5v7z97,arn:aws:iam::833617485655:role/service-role/DevOpsAgentRole-WebappAdmin-o6txzijj",
     "deployerRoleName": "Admin",
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
