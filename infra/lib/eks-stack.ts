@@ -317,7 +317,7 @@ import boto3, json, random, time
 from datetime import datetime, timezone
 STREAM='${prefix}-vehicle-telemetry'
 REGION='${cdk.Stack.of(this).region}'
-VINS=['WBA8B9G34KG123404','WBS4Z9C59LA123410','5YJ3E1EA5LF123420','1FA6P8CF5L5123430','WDD2050751A123440','WBA3A5G59DNP26082','5YJ3E1EB7LF123450']
+VINS=['WBA8B9G34KG123404','WBS4Z9C59LA123410','5YJ3E1EA5LF123420','WBA3A5G59DN123405','5YJ3E1EA5LF123411','WDD2060421A123431','1FA6P8CF5L5123421']
 kinesis=boto3.client('kinesis',region_name=REGION)
 print(f'Telemetry producer started: stream={STREAM}')
 batch=0
@@ -325,12 +325,13 @@ while True:
     batch+=1
     records=[]
     for _ in range(random.randint(5,15)):
-        vin=random.choice(VINS)
-        r={'vehicle_vin':vin,'timestamp':datetime.now(timezone.utc).isoformat(),'event_type':random.choice(['position','engine','fuel','diagnostic']),'latitude':round(random.uniform(25,48),6),'longitude':round(random.uniform(-125,-70),6),'speed_kmh':round(random.uniform(0,180),1),'fuel_level_pct':round(random.uniform(5,100),1),'engine_temp_c':round(random.uniform(80,110),1),'odometer_km':random.randint(1000,200000)}
+        vin=random.choices(VINS,weights=[1,1,1,40,1,1,1],k=1)[0]
+        r={'vehicle_vin':vin,'timestamp':datetime.now(timezone.utc).isoformat(),'event_type':random.choice(['HEARTBEAT','HEARTBEAT','HEARTBEAT','SPEED_EVENT','HARD_BRAKE','IGNITION_ON','CHARGING_START']),'latitude':round(random.uniform(25,52),6),'longitude':round(random.uniform(-125,14),6),'speed_kmh':random.randint(0,160),'soc_pct':round(random.uniform(10,95),2),'engine_temp_c':round(random.uniform(30,105),1),'odometer_km':random.randint(1000,120000)}
         records.append({'Data':json.dumps(r).encode(),'PartitionKey':vin})
     try:
         resp=kinesis.put_records(StreamName=STREAM,Records=records)
-        failed=resp.get("FailedRecordCount",0); print(f"[batch {batch}] Sent {len(records)} records, failed: {failed}")
+        failed=resp.get("FailedRecordCount",0)
+        if batch%30==0: print(f"[batch {batch}] Sent {len(records)} records, failed: {failed}")
     except Exception as e:
         print(f'[batch {batch}] Error: {e}')
     time.sleep(10)
